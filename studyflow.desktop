@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=StudyFlow
+Comment=Minimalist study timer and session tracker
+Exec=python3 -m studyflow
+Icon=clock
+Terminal=false
+Type=Application
+Categories=Utility;Education;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

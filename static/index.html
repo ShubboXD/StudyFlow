@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Study Timer HUD</title>
+  
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    :root {
+      --bg-dark: #0B0F19;
+      --card-bg: #141A29;
+      --card-border: rgba(255, 255, 255, 0.08);
+      --text-main: #F8FAFC;
+      --text-muted: #94A3B8;
+      
+      --physics: #FF5252;
+      --chemistry: #00E676;
+      --maths: #38BDF8;
+      --english: #F59E0B;
+      --computer: #A855F7;
+      --mixed: #EC4899;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      color: var(--text-main);
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+      padding: 14px;
+      min-height: 100vh;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 10px 16px;
+      margin-bottom: 12px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 16px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #F8FAFC;
+    }
+
+    .badge-shortcut {
+      background: rgba(56, 189, 248, 0.12);
+      color: #38BDF8;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    /* Cards */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 14px;
+      margin-bottom: 12px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+
+    .section-label {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 1.2px;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+      text-transform: uppercase;
+    }
+
+    /* Subject Tag Pills */
+    .subject-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .subject-pill {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+
+    .subject-pill:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .subject-pill.active {
+      color: #000000 !important;
+      font-weight: 800;
+      box-shadow: 0 0 15px rgba(255, 255, 255, 0.2);
+    }
+
+    .subject-pill[data-subject="Physics"].active { background: var(--physics); border-color: var(--physics); }
+    .subject-pill[data-subject="Chemistry"].active { background: var(--chemistry); border-color: var(--chemistry); }
+    .subject-pill[data-subject="Maths"].active { background: var(--maths); border-color: var(--maths); }
+    .subject-pill[data-subject="English"].active { background: var(--english); border-color: var(--english); }
+    .subject-pill[data-subject="Computer"].active { background: var(--computer); border-color: var(--computer); }
+    .subject-pill[data-subject="Mixed"].active { background: var(--mixed); border-color: var(--mixed); }
+
+    /* Hero Timer Display */
+    .timer-card {
+      text-align: center;
+      padding: 18px 14px;
+    }
+
+    .active-subject-header {
+      font-size: 14px;
+      font-weight: 800;
+      margin-bottom: 12px;
+      transition: color 0.3s ease;
+    }
+
+    .timer-display {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 52px;
+      font-weight: 800;
+      color: var(--text-muted);
+      background: #06080E;
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 12px 16px;
+      letter-spacing: 3px;
+      margin-bottom: 16px;
+      box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.8);
+      transition: all 0.3s ease;
+    }
+
+    .timer-display.running {
+      color: #34D399;
+      border-color: #34D399;
+      box-shadow: 0 0 25px rgba(52, 211, 153, 0.2), inset 0 2px 10px rgba(0, 0, 0, 0.8);
+    }
+
+    /* Action Control Buttons (START and STOP ONLY) */
+    .action-group {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .btn-action {
+      flex: 1;
+      padding: 12px 20px;
+      font-size: 14px;
+      font-weight: 800;
+      border-radius: 10px;
+      border: none;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-start {
+      background: linear-gradient(135deg, #0284C7 0%, #34D399 100%);
+      color: #0F172A;
+      box-shadow: 0 4px 15px rgba(52, 211, 153, 0.3);
+    }
+
+    .btn-start:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(52, 211, 153, 0.5);
+    }
+
+    .btn-start:disabled {
+      background: #1E293B;
+      color: #475569;
+      box-shadow: none;
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .btn-stop {
+      background: linear-gradient(135deg, #E11D48 0%, #F43F5E 100%);
+      color: #FFFFFF;
+      box-shadow: 0 4px 15px rgba(244, 63, 94, 0.3);
+    }
+
+    .btn-stop:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(244, 63, 94, 0.5);
+    }
+
+    .btn-stop:disabled {
+      background: #1E293B;
+      color: #475569;
+      box-shadow: none;
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    /* Today's Summary & Drawer Toggle Bar */
+    .summary-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      padding: 0 4px;
+    }
+
+    .today-txt {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+
+    .btn-drawer {
+      background: rgba(56, 189, 248, 0.1);
+      border: 1px solid rgba(56, 189, 248, 0.2);
+      color: #38BDF8;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-drawer:hover {
+      background: rgba(56, 189, 248, 0.2);
+    }
+
+    /* Accordion Drawer */
+    .drawer-content {
+      display: none;
+      animation: fadeIn 0.3s ease;
+    }
+
+    .drawer-content.open {
+      display: block;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    /* Filter Bar */
+    .filter-bar {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .filter-chip {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--card-border);
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 4px;
+      border-radius: 8px;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .filter-chip.active {
+      background: #38BDF8;
+      color: #0F172A;
+      border-color: #38BDF8;
+    }
+
+    /* Stat Cards Row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    .stat-chip {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 8px;
+      text-align: center;
+    }
+
+    .stat-chip-lbl {
+      font-size: 9px;
+      font-weight: 800;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+
+    .stat-chip-val {
+      font-size: 13px;
+      font-weight: 800;
+      color: #38BDF8;
+      margin-top: 2px;
+    }
+
+    /* Charts Container */
+    .charts-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 0.8fr;
+      gap: 10px;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+
+    .chart-box {
+      position: relative;
+      height: 160px;
+      width: 100%;
+    }
+
+    /* History List */
+    .history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 150px;
+      overflow-y: auto;
+      padding-right: 2px;
+    }
+
+    .history-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+
+    .hist-badge {
+      font-size: 10px;
+      font-weight: 800;
+      color: #000000;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+
+    .hist-time {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    .hist-dur {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      font-weight: 700;
+      color: #34D399;
+    }
+
+    .btn-delete {
+      background: rgba(244, 63, 94, 0.1);
+      border: 1px solid rgba(244, 63, 94, 0.3);
+      color: #F43F5E;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .btn-delete:hover {
+      background: #F43F5E;
+      color: #FFFFFF;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 20px;
+      color: var(--text-muted);
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="brand">
+      <div class="brand-title">⚡ STUDY TIMER</div>
+    </div>
+    <div class="badge-shortcut">Super+Z</div>
+  </div>
+
+  <!-- Subject Pills -->
+  <div class="card">
+    <div class="section-label">Select Subject Tag</div>
+    <div class="subject-grid">
+      <div class="subject-pill active" data-subject="Physics">Physics</div>
+      <div class="subject-pill" data-subject="Chemistry">Chemistry</div>
+      <div class="subject-pill" data-subject="Maths">Maths</div>
+      <div class="subject-pill" data-subject="English">English</div>
+      <div class="subject-pill" data-subject="Computer">Computer</div>
+      <div class="subject-pill" data-subject="Mixed">Mixed</div>
+    </div>
+  </div>
+
+  <!-- Timer Card -->
+  <div class="card timer-card">
+    <div class="active-subject-header" id="subjHeader" style="color: var(--physics);">Current Subject: Physics</div>
+    <div class="timer-display" id="timerDigits">00:00:00</div>
+
+    <!-- Action Buttons (START & STOP ONLY - NO PAUSE) -->
+    <div class="action-group">
+      <button class="btn-action btn-start" id="btnStart">START TIMER</button>
+      <button class="btn-action btn-stop" id="btnStop" disabled>STOP & SAVE</button>
+    </div>
+  </div>
+
+  <!-- Today Summary Bar & Drawer Toggle -->
+  <div class="summary-bar">
+    <div class="today-txt" id="todaySummaryTxt">Today: 0h 0m (0 sessions)</div>
+    <button class="btn-drawer" id="btnDrawerToggle">📊 Analytics & History ▾</button>
+  </div>
+
+  <!-- Accordion Drawer -->
+  <div class="drawer-content" id="drawerContent">
+    <div class="card">
+      
+      <!-- Timeframe Filters -->
+      <div class="filter-bar">
+        <div class="filter-chip" data-days="1">Today</div>
+        <div class="filter-chip" data-days="3">3D</div>
+        <div class="filter-chip active" data-days="7">7D</div>
+        <div class="filter-chip" data-days="30">30D</div>
+        <div class="filter-chip" data-days="all">All</div>
+      </div>
+
+      <!-- Stat Summary Chips -->
+      <div class="stats-row">
+        <div class="stat-chip">
+          <div class="stat-chip-lbl">Total Time</div>
+          <div class="stat-chip-val" id="statTot">0h 0m</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-chip-lbl">Daily Avg</div>
+          <div class="stat-chip-val" id="statAvg">0h 0m</div>
+        </div>
+        <div class="stat-chip">
+          <div class="stat-chip-lbl">Top Subject</div>
+          <div class="stat-chip-val" id="statTop" style="color: #A855F7;">None</div>
+        </div>
+      </div>
+
+      <!-- Interactive Charts Grid -->
+      <div class="charts-grid">
+        <div class="chart-box">
+          <canvas id="barChart"></canvas>
+        </div>
+        <div class="chart-box">
+          <canvas id="donutChart"></canvas>
+        </div>
+      </div>
+
+      <!-- History Section -->
+      <div class="section-label" style="margin-top: 10px;">Recent Study Logs</div>
+      <div class="history-list" id="historyList">
+        <div class="empty-state">No study logs recorded yet</div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const SUBJECT_COLORS = {
+      "Physics": "#FF5252",
+      "Chemistry": "#00E676",
+      "Maths": "#38BDF8",
+      "English": "#F59E0B",
+      "Computer": "#A855F7",
+      "Mixed": "#EC4899"
+    };
+
+    let currentSubject = "Physics";
+    let isRunning = false;
+    let elapsedSeconds = 0;
+    let timerInterval = null;
+    let startTimeIso = null;
+    let selectedDays = 7;
+
+    let barChartInstance = null;
+    let donutChartInstance = null;
+
+    // Subject Pills Handling
+    document.querySelectorAll('.subject-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        if (isRunning) return;
+        document.querySelectorAll('.subject-pill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        currentSubject = pill.dataset.subject;
+        
+        const header = document.getElementById('subjHeader');
+        header.textContent = `Current Subject: ${currentSubject}`;
+        header.style.color = SUBJECT_COLORS[currentSubject] || '#F8FAFC';
+      });
+    });
+
+    // Timer Logic
+    const btnStart = document.getElementById('btnStart');
+    const btnStop = document.getElementById('btnStop');
+    const timerDigits = document.getElementById('timerDigits');
+
+    btnStart.addEventListener('click', () => {
+      if (!isRunning) {
+        isRunning = true;
+        elapsedSeconds = 0;
+        startTimeIso = new Date().toISOString();
+
+        timerDigits.classList.add('running');
+        btnStart.disabled = true;
+        btnStop.disabled = false;
+
+        document.querySelectorAll('.subject-pill').forEach(p => p.style.pointerEvents = 'none');
+
+        timerInterval = setInterval(() => {
+          elapsedSeconds++;
+          timerDigits.textContent = formatSeconds(elapsedSeconds);
+        }, 1000);
+      }
+    });
+
+    btnStop.addEventListener('click', async () => {
+      if (isRunning) {
+        clearInterval(timerInterval);
+        isRunning = false;
+        const endTimeIso = new Date().toISOString();
+
+        if (elapsedSeconds >= 1) {
+          await fetch('/api/sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              subject: currentSubject,
+              duration_seconds: elapsedSeconds,
+              start_time: startTimeIso,
+              end_time: endTimeIso
+            })
+          });
+        }
+
+        elapsedSeconds = 0;
+        timerDigits.textContent = "00:00:00";
+        timerDigits.classList.remove('running');
+
+        btnStart.disabled = false;
+        btnStop.disabled = true;
+
+        document.querySelectorAll('.subject-pill').forEach(p => p.style.pointerEvents = 'auto');
+
+        fetchAnalytics();
+        fetchHistory();
+      }
+    });
+
+    // Drawer Toggle
+    const btnDrawer = document.getElementById('btnDrawerToggle');
+    const drawerContent = document.getElementById('drawerContent');
+
+    btnDrawer.addEventListener('click', () => {
+      drawerContent.classList.toggle('open');
+      const isOpen = drawerContent.classList.contains('open');
+      btnDrawer.textContent = isOpen ? '📊 Analytics & History ▴' : '📊 Analytics & History ▾';
+    });
+
+    // Timeframe Filter Chips
+    document.querySelectorAll('.filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+        chip.classList.add('active');
+        selectedDays = chip.dataset.days;
+        fetchAnalytics();
+      });
+    });
+
+    // Fetch Analytics & Render Charts
+    async function fetchAnalytics() {
+      try {
+        const res = await fetch(`/api/stats?days=${selectedDays}`);
+        const data = await res.json();
+
+        // Update Stats Chips
+        document.getElementById('statTot').textContent = formatHoursMins(data.stats.total_seconds);
+        document.getElementById('statAvg').textContent = formatHoursMins(data.stats.avg_daily_seconds);
+        
+        const topEl = document.getElementById('statTop');
+        topEl.textContent = data.stats.top_subject;
+        topEl.style.color = SUBJECT_COLORS[data.stats.top_subject] || '#38BDF8';
+
+        // Update Today Summary bar
+        if (selectedDays == 1 || selectedDays == '7') {
+          document.getElementById('todaySummaryTxt').textContent = 
+            `Today: ${formatHoursMins(data.stats.total_seconds)} (${data.stats.total_sessions} sessions)`;
+        }
+
+        renderBarChart(data);
+        renderDonutChart(data.subjects);
+      } catch (err) {
+        console.error("Error fetching analytics:", err);
+      }
+    }
+
+    // Render Bar Chart (24H Timeline for Today, sampled labels for Month)
+    function renderBarChart(data) {
+      const ctx = document.getElementById('barChart').getContext('2d');
+      if (barChartInstance) barChartInstance.destroy();
+
+      let labels = [];
+      let datasetData = [];
+
+      if (data.days == 1 && data.hourly && data.hourly.length > 0) {
+        // Today 24H Timeline
+        labels = data.hourly.map((h, i) => (i % 4 === 0 || i === 23) ? h.label : '');
+        datasetData = data.hourly.map(h => (h.total_seconds / 3600.0).toFixed(2));
+      } else {
+        // Daily Aggregates
+        labels = data.daily.map(d => d.display_date);
+        datasetData = data.daily.map(d => (d.total_seconds / 3600.0).toFixed(2));
+      }
+
+      barChartInstance = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: datasetData,
+            backgroundColor: '#38BDF8',
+            borderRadius: 4,
+            borderSkipped: false
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: {
+              grid: { display: false },
+              ticks: { color: '#94A3B8', font: { size: 9 }, autoSkip: true, maxTicksLimit: 7 }
+            },
+            y: {
+              grid: { color: 'rgba(255,255,255,0.05)' },
+              ticks: { color: '#94A3B8', font: { size: 9 } }
+            }
+          }
+        }
+      });
+    }
+
+    // Render Donut Chart
+    function renderDonutChart(subjectData) {
+      const ctx = document.getElementById('donutChart').getContext('2d');
+      if (donutChartInstance) donutChartInstance.destroy();
+
+      const validSubjects = Object.keys(subjectData).filter(s => subjectData[s] > 0);
+      const values = validSubjects.map(s => (subjectData[s] / 3600.0).toFixed(2));
+      const colors = validSubjects.map(s => SUBJECT_COLORS[s] || '#38BDF8');
+
+      if (validSubjects.length === 0) {
+        donutChartInstance = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: ['No Data'],
+            datasets: [{ data: [1], backgroundColor: ['rgba(255,255,255,0.05)'] }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } }
+          }
+        });
+        return;
+      }
+
+      donutChartInstance = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: validSubjects,
+          datasets: [{
+            data: values,
+            backgroundColor: colors,
+            borderWidth: 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'right',
+              labels: { color: '#F8FAFC', font: { size: 9, weight: 'bold' }, boxWidth: 8 }
+            }
+          },
+          cutout: '65%'
+        }
+      });
+    }
+
+    // Fetch & Render History
+    async function fetchHistory() {
+      try {
+        const res = await fetch('/api/sessions?days=all');
+        const data = await res.json();
+        const listEl = document.getElementById('historyList');
+        listEl.innerHTML = '';
+
+        if (!data.sessions || data.sessions.length === 0) {
+          listEl.innerHTML = '<div class="empty-state">No study logs recorded yet</div>';
+          return;
+        }
+
+        data.sessions.slice(0, 10).forEach(s => {
+          const item = document.createElement('div');
+          item.className = 'history-item';
+
+          const color = SUBJECT_COLORS[s.subject] || '#38BDF8';
+          const startDt = new Date(s.start_time);
+          const dateStr = `${startDt.getMonth()+1}/${startDt.getDate()} ${startDt.getHours()}:${String(startDt.getMinutes()).padStart(2, '0')}`;
+          const durStr = formatSeconds(s.duration_seconds);
+
+          item.innerHTML = `
+            <span class="hist-badge" style="background: ${color};">${s.subject}</span>
+            <span class="hist-time">${dateStr}</span>
+            <span class="hist-dur">⏱ ${durStr}</span>
+            <button class="btn-delete" onclick="deleteSession(${s.id})">✕</button>
+          `;
+          listEl.appendChild(item);
+        });
+      } catch (err) {
+        console.error("Error fetching history:", err);
+      }
+    }
+
+    async function deleteSession(id) {
+      await fetch(`/api/sessions/${id}`, { method: 'DELETE' });
+      fetchAnalytics();
+      fetchHistory();
+    }
+
+    // Helpers
+    function formatSeconds(sec) {
+      sec = parseInt(sec);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    }
+
+    function formatHoursMins(sec) {
+      sec = parseInt(sec);
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }
+
+    // Initial Load
+    fetchAnalytics();
+    fetchHistory();
+  </script>
+</body>
+</html>
