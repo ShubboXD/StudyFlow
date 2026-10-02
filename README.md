@@ -49,11 +49,17 @@ No hardcoded subject limits. Through the **Settings** tab, you can:
 - **Data Export**: 1-click **Export to CSV** so you can easily bring your session logs into Notion, Obsidian, Excel, or Google Sheets.
 - **Reset to Defaults**: Restore default subjects and timers at any time with one click without losing past study logs.
 
-### 4. Stats that actually make sense
-- **Daily breakdown**: See exactly how much time you gave to each subject with color-coded bars and percentages.
+### 4. Stats that actually make sense & Editable Sessions
+- **Interactive recent sessions**: Easily edit any logged session directly from the UI.
+  - **1-Click time adjustment**: `+` and `−` buttons directly on each row to quickly bump duration up or down by 5 minutes.
+  - **Quick subject reassignment**: Right-click any session row to switch its subject in 1 click via the context menu.
+  - **Full Edit Modal (`✎`)**: Adjust subject, duration (hours/mins + quick pill steppers), date, and start time with live end-time calculation.
+  - **Manual Session Logging**: Click `+ Log Session` in the section header to record any offline or past study session.
+  - **Safe Deletion (`✕`)**: Delete unwanted sessions with a dark-themed confirmation modal.
+- **Daily breakdown**: See exactly how much time you gave to each subject with color-coded bars and percentages (updates instantly when sessions are adjusted).
 - **Weekly comparison**: Compare today's focus against earlier days of the week.
 - **Typical session time**: Uses the **median** rather than a naive average, so that accidental 30-second test session won't skew your numbers.
-- **Session history**: A chronological log of every study block saved.
+- **Session history**: A chronological log of every study block saved with "Show all" / "Show less" toggle.
 
 ### 5. Native Single-Instance IPC
 If StudyFlow is already running in the background, executing `studyflow --toggle` (or `./run.sh --toggle`) talks to the active instance via a native Qt local socket and flips the window visibility instantly. No duplicate instances, no delay.
