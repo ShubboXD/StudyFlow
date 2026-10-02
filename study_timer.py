@@ -17,10 +17,11 @@ from PyQt5.QtWidgets import (
     QLabel, QPushButton, QSystemTrayIcon, QMenu, QAction,
     QTabWidget, QComboBox, QFrame, QScrollArea, QDesktopWidget,
     QStackedWidget, QDialog, QLineEdit, QFileDialog, QMessageBox,
-    QGridLayout, QSizePolicy, QColorDialog
+    QGridLayout, QSizePolicy, QColorDialog, QSpinBox, QDateEdit, QTimeEdit
 )
 from PyQt5.QtCore import (
-    Qt, QTimer, QPoint, QSize, pyqtSignal, QObject, QRect
+    Qt, QTimer, QPoint, QSize, pyqtSignal, QObject, QRect,
+    QDate, QTime
 )
 from PyQt5.QtGui import (
     QIcon, QFont, QColor, QPainter, QPen, QBrush, QPixmap
@@ -238,6 +239,102 @@ class Database:
             "duration_seconds": r[4],
             "date": r[5]
         } for r in cursor.fetchall()]
+
+    def get_session_by_id(self, session_id):
+        cursor = self.conn.execute(
+            "SELECT id, subject, start_time, end_time, duration_seconds, date FROM sessions WHERE id = ?",
+            (session_id,)
+        )
+        r = cursor.fetchone()
+        if r:
+            return {
+                "id": r[0],
+                "subject": r[1],
+                "start_time": r[2],
+                "end_time": r[3],
+                "duration_seconds": r[4],
+                "date": r[5]
+            }
+        return None
+
+    def update_session(self, session_id, subject=None, duration_seconds=None, start_time=None, end_time=None, date=None):
+        try:
+            cursor = self.conn.execute(
+                "SELECT subject, start_time, end_time, duration_seconds, date FROM sessions WHERE id = ?",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False, "Session not found."
+            cur_subj, cur_start, cur_end, cur_dur, cur_date = row
+
+            new_subj = subject.strip() if subject is not None and subject.strip() else cur_subj
+            new_dur = int(duration_seconds) if duration_seconds is not None else cur_dur
+            if new_dur < 60:
+                new_dur = 60
+
+            new_start = start_time if start_time is not None else cur_start
+
+            if end_time is not None:
+                new_end = end_time
+            else:
+                try:
+                    st_dt = datetime.fromisoformat(new_start)
+                    new_end = (st_dt + timedelta(seconds=new_dur)).isoformat()
+                except Exception:
+                    new_end = cur_end
+
+            if date is not None:
+                new_date = date
+            else:
+                try:
+                    st_dt = datetime.fromisoformat(new_start)
+                    new_date = st_dt.strftime("%Y-%m-%d")
+                except Exception:
+                    new_date = cur_date
+
+            self.conn.execute("""
+                UPDATE sessions
+                SET subject = ?, start_time = ?, end_time = ?, duration_seconds = ?, date = ?
+                WHERE id = ?
+            """, (new_subj, new_start, new_end, new_dur, new_date, session_id))
+            self.conn.commit()
+            return True, ""
+        except Exception as e:
+            return False, str(e)
+
+    def delete_session(self, session_id):
+        try:
+            self.conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
+
+    def adjust_session_duration(self, session_id, delta_seconds):
+        try:
+            cursor = self.conn.execute(
+                "SELECT duration_seconds, start_time FROM sessions WHERE id = ?",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return False
+            cur_dur, cur_start = row
+            new_dur = max(60, cur_dur + delta_seconds)
+            try:
+                st_dt = datetime.fromisoformat(cur_start)
+                new_end = (st_dt + timedelta(seconds=new_dur)).isoformat()
+            except Exception:
+                new_end = cur_start
+            self.conn.execute(
+                "UPDATE sessions SET duration_seconds = ?, end_time = ? WHERE id = ?",
+                (new_dur, new_end, session_id)
+            )
+            self.conn.commit()
+            return True
+        except Exception:
+            return False
 
     def get_subjects(self):
         try:
@@ -494,6 +591,56 @@ QScrollBar::handle:vertical:hover {{
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
+}}
+
+QSpinBox, QDateEdit, QTimeEdit {{
+    background-color: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border']};
+    border-radius: 4px;
+    color: {COLORS['text_primary']};
+    padding: 3px 6px;
+    font-size: 12px;
+}}
+
+QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus {{
+    border-color: {COLORS['accent']};
+}}
+
+QSpinBox::up-button, QSpinBox::down-button,
+QDateEdit::up-button, QDateEdit::down-button,
+QTimeEdit::up-button, QTimeEdit::down-button {{
+    background-color: {COLORS['bg_hover']};
+    border: none;
+    width: 16px;
+}}
+
+QSpinBox::up-button:hover, QSpinBox::down-button:hover,
+QDateEdit::up-button:hover, QDateEdit::down-button:hover,
+QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {{
+    background-color: {COLORS['border_light']};
+}}
+
+QMenu {{
+    background-color: {COLORS['bg_card']};
+    border: 1px solid {COLORS['border_light']};
+    border-radius: 4px;
+    padding: 4px;
+}}
+
+QMenu::item {{
+    color: {COLORS['text_primary']};
+    padding: 6px 20px 6px 14px;
+    font-size: 12px;
+}}
+
+QMenu::item:selected {{
+    background-color: {COLORS['bg_hover']};
+}}
+
+QMenu::separator {{
+    height: 1px;
+    background: {COLORS['border']};
+    margin: 4px 6px;
 }}
 """
 
@@ -2290,6 +2437,789 @@ class PomodoroTab(QWidget):
         return f"{mins:02d}:{secs:02d}"
 
 
+# ─── Session Edit & Confirmation Dialogs ──────────────────────────────────────
+
+class ConfirmDialog(QDialog):
+    """Clean minimalist confirmation modal matching StudyFlow dark theme."""
+
+    def __init__(self, parent=None, title="Delete Session", message="Are you sure you want to delete this session?", confirm_label="Delete", is_danger=True):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setFixedSize(320, 160)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._setup_ui(title, message, confirm_label, is_danger)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton and hasattr(self, '_drag_pos'):
+            self.move(event.globalPos() - self._drag_pos)
+            event.accept()
+
+    def _setup_ui(self, title, message, confirm_label, is_danger):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_window']};
+                border: 1px solid {COLORS['border_light']};
+                border-radius: 6px;
+            }}
+        """)
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(18, 16, 18, 16)
+        c_layout.setSpacing(12)
+
+        t_lbl = QLabel(title.upper())
+        t_lbl.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 700; font-size: 13px; letter-spacing: 1px;")
+        c_layout.addWidget(t_lbl)
+
+        msg_lbl = QLabel(message)
+        msg_lbl.setWordWrap(True)
+        msg_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 12px; line-height: 1.4;")
+        c_layout.addWidget(msg_lbl)
+
+        c_layout.addStretch()
+
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                color: {COLORS['text_secondary']};
+                font-size: 12px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                color: {COLORS['text_primary']};
+            }}
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        confirm_btn = QPushButton(confirm_label)
+        confirm_btn.setFixedHeight(32)
+        confirm_btn.setCursor(Qt.PointingHandCursor)
+        if is_danger:
+            confirm_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['danger']};
+                    border: 1px solid {COLORS['danger']};
+                    border-radius: 4px;
+                    color: white;
+                    font-size: 12px;
+                    font-weight: 700;
+                }}
+                QPushButton:hover {{
+                    background-color: #EF4444;
+                }}
+            """)
+        else:
+            confirm_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['text_primary']};
+                    border: 1px solid {COLORS['text_primary']};
+                    border-radius: 4px;
+                    color: {COLORS['bg_window']};
+                    font-size: 12px;
+                    font-weight: 700;
+                }}
+                QPushButton:hover {{
+                    background-color: #E4E4E7;
+                }}
+            """)
+        confirm_btn.clicked.connect(self.accept)
+        btn_layout.addWidget(confirm_btn)
+
+        c_layout.addLayout(btn_layout)
+        layout.addWidget(card)
+
+
+class SessionEditDialog(QDialog):
+    """Clean dark-theme modal dialog to edit or manually add a study session."""
+
+    def __init__(self, parent=None, db=None, session=None):
+        super().__init__(parent)
+        self.db = db
+        self.session = session
+        title = "Edit Session" if session else "Log Session"
+        self.setWindowTitle(title)
+        self.setFixedSize(330, 400)
+        self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._setup_ui(title)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() == Qt.LeftButton and hasattr(self, '_drag_pos'):
+            self.move(event.globalPos() - self._drag_pos)
+            event.accept()
+
+    def _setup_ui(self, title):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        card = QFrame()
+        card.setStyleSheet(f"""
+            QFrame {{
+                background-color: {COLORS['bg_window']};
+                border: 1px solid {COLORS['border_light']};
+                border-radius: 6px;
+            }}
+            QSpinBox, QDateEdit, QTimeEdit, QComboBox {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                color: {COLORS['text_primary']};
+                padding: 3px 6px;
+                font-size: 12px;
+            }}
+            QSpinBox:focus, QDateEdit:focus, QTimeEdit:focus, QComboBox:focus {{
+                border-color: {COLORS['accent']};
+            }}
+            QSpinBox::up-button, QSpinBox::down-button,
+            QDateEdit::up-button, QDateEdit::down-button,
+            QTimeEdit::up-button, QTimeEdit::down-button {{
+                background-color: {COLORS['bg_hover']};
+                border: none;
+                width: 16px;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover,
+            QDateEdit::up-button:hover, QDateEdit::down-button:hover,
+            QTimeEdit::up-button:hover, QTimeEdit::down-button:hover {{
+                background-color: {COLORS['border_light']};
+            }}
+            QDateEdit::drop-down, QComboBox::drop-down {{
+                border: none;
+                width: 20px;
+            }}
+            QDateEdit::down-arrow, QComboBox::down-arrow {{
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {COLORS['text_secondary']};
+                margin-right: 4px;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                color: {COLORS['text_primary']};
+                selection-background-color: {COLORS['bg_hover']};
+                selection-color: {COLORS['text_primary']};
+                padding: 4px;
+            }}
+        """)
+        c_layout = QVBoxLayout(card)
+        c_layout.setContentsMargins(18, 16, 18, 16)
+        c_layout.setSpacing(10)
+
+        # Header row
+        hdr_layout = QHBoxLayout()
+        t_lbl = QLabel(title.upper())
+        t_lbl.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 700; font-size: 13px; letter-spacing: 1px;")
+        hdr_layout.addWidget(t_lbl)
+        hdr_layout.addStretch()
+
+        close_btn = QPushButton("✕")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setCursor(Qt.PointingHandCursor)
+        close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                color: {COLORS['text_dim']};
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                color: {COLORS['text_primary']};
+            }}
+        """)
+        close_btn.clicked.connect(self.reject)
+        hdr_layout.addWidget(close_btn)
+        c_layout.addLayout(hdr_layout)
+
+        # 1. Subject
+        subj_lbl = QLabel("SUBJECT")
+        subj_lbl.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 10px; font-weight: 700; letter-spacing: 1px; margin-top: 2px;")
+        c_layout.addWidget(subj_lbl)
+
+        self.subject_combo = QComboBox()
+        self.subject_combo.setFixedHeight(32)
+        all_subjects = self.db.get_subjects() if self.db else []
+        selected_idx = 0
+        current_subj_name = self.session["subject"] if self.session else (all_subjects[0]["name"] if all_subjects else "")
+        for idx, s in enumerate(all_subjects):
+            icon = QIcon(make_color_dot_pixmap(s["color"], size=10))
+            self.subject_combo.addItem(icon, s["name"])
+            if s["name"] == current_subj_name:
+                selected_idx = idx
+        self.subject_combo.setCurrentIndex(selected_idx)
+        c_layout.addWidget(self.subject_combo)
+
+        # 2. Duration
+        dur_lbl = QLabel("DURATION")
+        dur_lbl.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 10px; font-weight: 700; letter-spacing: 1px; margin-top: 2px;")
+        c_layout.addWidget(dur_lbl)
+
+        dur_input_layout = QHBoxLayout()
+        dur_input_layout.setSpacing(8)
+
+        total_sec = self.session["duration_seconds"] if self.session else 1500  # 25 min default
+        init_hrs = total_sec // 3600
+        init_mins = (total_sec % 3600) // 60
+        if init_hrs == 0 and init_mins == 0:
+            init_mins = 1
+
+        self.hours_spin = QSpinBox()
+        self.hours_spin.setRange(0, 23)
+        self.hours_spin.setValue(init_hrs)
+        self.hours_spin.setFixedHeight(30)
+        self.hours_spin.setSuffix(" hrs")
+        self.hours_spin.valueChanged.connect(self._update_preview)
+        dur_input_layout.addWidget(self.hours_spin)
+
+        self.mins_spin = QSpinBox()
+        self.mins_spin.setRange(0, 59)
+        self.mins_spin.setValue(init_mins)
+        self.mins_spin.setFixedHeight(30)
+        self.mins_spin.setSuffix(" mins")
+        self.mins_spin.valueChanged.connect(self._update_preview)
+        dur_input_layout.addWidget(self.mins_spin)
+
+        c_layout.addLayout(dur_input_layout)
+
+        # Quick preset buttons
+        presets_layout = QHBoxLayout()
+        presets_layout.setSpacing(4)
+        for label, delta in [("-15m", -15), ("-5m", -5), ("-1m", -1), ("+1m", 1), ("+5m", 5), ("+15m", 15)]:
+            p_btn = QPushButton(label)
+            p_btn.setFixedHeight(22)
+            p_btn.setCursor(Qt.PointingHandCursor)
+            p_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['bg_card']};
+                    border: 1px solid {COLORS['border']};
+                    border-radius: 3px;
+                    color: {COLORS['text_secondary']};
+                    font-size: 10px;
+                    font-weight: 600;
+                    padding: 0 4px;
+                }}
+                QPushButton:hover {{
+                    color: {COLORS['text_primary']};
+                    border-color: {COLORS['border_light']};
+                    background-color: {COLORS['bg_hover']};
+                }}
+            """)
+            p_btn.clicked.connect(lambda ch, d=delta: self._adjust_minutes(d))
+            presets_layout.addWidget(p_btn)
+        c_layout.addLayout(presets_layout)
+
+        # 3. Date & Time
+        dt_lbl = QLabel("DATE & START TIME")
+        dt_lbl.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 10px; font-weight: 700; letter-spacing: 1px; margin-top: 2px;")
+        c_layout.addWidget(dt_lbl)
+
+        dt_layout = QHBoxLayout()
+        dt_layout.setSpacing(6)
+
+        now = datetime.now()
+        if self.session:
+            try:
+                dt = datetime.fromisoformat(self.session["start_time"])
+            except Exception:
+                dt = now
+        else:
+            dt = now
+
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_edit.setDate(QDate(dt.year, dt.month, dt.day))
+        self.date_edit.setFixedHeight(30)
+        self.date_edit.dateChanged.connect(self._update_preview)
+        dt_layout.addWidget(self.date_edit, 3)
+
+        self.time_edit = QTimeEdit()
+        self.time_edit.setDisplayFormat("HH:mm")
+        self.time_edit.setTime(QTime(dt.hour, dt.minute))
+        self.time_edit.setFixedHeight(30)
+        self.time_edit.timeChanged.connect(self._update_preview)
+        dt_layout.addWidget(self.time_edit, 2)
+
+        now_btn = QPushButton("Now")
+        now_btn.setFixedHeight(30)
+        now_btn.setCursor(Qt.PointingHandCursor)
+        now_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                color: {COLORS['text_secondary']};
+                font-size: 11px;
+                padding: 0 8px;
+            }}
+            QPushButton:hover {{
+                color: {COLORS['text_primary']};
+                border-color: {COLORS['border_light']};
+            }}
+        """)
+        now_btn.clicked.connect(self._set_to_now)
+        dt_layout.addWidget(now_btn, 1)
+
+        c_layout.addLayout(dt_layout)
+
+        # Preview label
+        self.preview_lbl = QLabel()
+        self.preview_lbl.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 11px;")
+        c_layout.addWidget(self.preview_lbl)
+        self._update_preview()
+
+        c_layout.addStretch()
+
+        # Bottom Buttons
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(8)
+
+        if self.session:
+            del_btn = QPushButton("Delete")
+            del_btn.setFixedHeight(32)
+            del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: transparent;
+                    border: 1px solid {COLORS['danger']};
+                    border-radius: 4px;
+                    color: {COLORS['danger']};
+                    font-size: 12px;
+                    font-weight: 600;
+                    padding: 0 10px;
+                }}
+                QPushButton:hover {{
+                    background-color: {COLORS['danger']};
+                    color: white;
+                }}
+            """)
+            del_btn.clicked.connect(self._delete_session)
+            btn_layout.addWidget(del_btn)
+
+        btn_layout.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setFixedHeight(32)
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+                color: {COLORS['text_secondary']};
+                font-size: 12px;
+                font-weight: 500;
+                padding: 0 12px;
+            }}
+            QPushButton:hover {{
+                color: {COLORS['text_primary']};
+            }}
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(cancel_btn)
+
+        save_btn = QPushButton("Save Changes" if self.session else "Add Session")
+        save_btn.setFixedHeight(32)
+        save_btn.setCursor(Qt.PointingHandCursor)
+        save_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['text_primary']};
+                border-radius: 4px;
+                color: {COLORS['bg_window']};
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 14px;
+            }}
+            QPushButton:hover {{
+                background-color: #E4E4E7;
+            }}
+        """)
+        save_btn.clicked.connect(self._save)
+        btn_layout.addWidget(save_btn)
+
+        c_layout.addLayout(btn_layout)
+        layout.addWidget(card)
+
+    def _adjust_minutes(self, delta):
+        cur_total = self.hours_spin.value() * 60 + self.mins_spin.value()
+        new_total = max(1, cur_total + delta)
+        self.hours_spin.setValue(new_total // 60)
+        self.mins_spin.setValue(new_total % 60)
+        self._update_preview()
+
+    def _set_to_now(self):
+        now = datetime.now()
+        self.date_edit.setDate(QDate(now.year, now.month, now.day))
+        self.time_edit.setTime(QTime(now.hour, now.minute))
+        self._update_preview()
+
+    def _update_preview(self):
+        hrs = self.hours_spin.value()
+        mins = self.mins_spin.value()
+        total_sec = hrs * 3600 + mins * 60
+        if total_sec < 60:
+            total_sec = 60
+        dur_str = format_duration(total_sec)
+
+        try:
+            yd = self.date_edit.date()
+            yt = self.time_edit.time()
+            st_dt = datetime(yd.year(), yd.month(), yd.day(), yt.hour(), yt.minute())
+            end_dt = st_dt + timedelta(seconds=total_sec)
+            self.preview_lbl.setText(f"{dur_str}  •  {st_dt.strftime('%H:%M')} → {end_dt.strftime('%H:%M')}")
+        except Exception:
+            self.preview_lbl.setText(dur_str)
+
+    def _delete_session(self):
+        if not self.session:
+            return
+        subj = self.session["subject"]
+        dur_str = format_duration(self.session["duration_seconds"])
+        confirm = ConfirmDialog(
+            self.window(),
+            title="Delete Session",
+            message=f"Are you sure you want to delete this {dur_str} {subj} session?",
+            confirm_label="Delete",
+            is_danger=True
+        )
+        if confirm.exec_() == QDialog.Accepted:
+            self.db.delete_session(self.session["id"])
+            self.accept()
+
+    def _save(self):
+        subject = self.subject_combo.currentText().strip()
+        if not subject:
+            return
+
+        hrs = self.hours_spin.value()
+        mins = self.mins_spin.value()
+        duration_seconds = max(60, hrs * 3600 + mins * 60)
+
+        yd = self.date_edit.date()
+        yt = self.time_edit.time()
+        start_dt = datetime(yd.year(), yd.month(), yd.day(), yt.hour(), yt.minute(), 0)
+        end_dt = start_dt + timedelta(seconds=duration_seconds)
+        date_str = start_dt.strftime("%Y-%m-%d")
+
+        if self.session:
+            self.db.update_session(
+                session_id=self.session["id"],
+                subject=subject,
+                duration_seconds=duration_seconds,
+                start_time=start_dt.isoformat(),
+                end_time=end_dt.isoformat(),
+                date=date_str
+            )
+        else:
+            self.db.save_session(
+                subject=subject,
+                start_time=start_dt,
+                end_time=end_dt,
+                duration_seconds=duration_seconds
+            )
+        self.accept()
+
+
+class EditableSessionRow(QFrame):
+    """Interactive session row supporting quick duration adjustment (+/-),
+    inline subject switching via context menu, full edit dialog, and deletion."""
+
+    session_updated = pyqtSignal()
+    session_deleted = pyqtSignal(int)
+
+    def __init__(self, session, db, colors=None, parent=None):
+        super().__init__(parent)
+        self.session = session
+        self.db = db
+        self.colors = colors or {}
+        self.setObjectName("SessionRow")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Double-click or click ✎ to edit, right-click for quick actions")
+        self._setup_ui()
+
+    def _setup_ui(self):
+        self.setStyleSheet(f"""
+            QFrame#SessionRow {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+            }}
+            QFrame#SessionRow:hover {{
+                border-color: {COLORS['border_light']};
+                background-color: {COLORS['bg_hover']};
+            }}
+        """)
+        row_layout = QHBoxLayout(self)
+        row_layout.setContentsMargins(10, 5, 8, 5)
+        row_layout.setSpacing(6)
+
+        subj = self.session["subject"]
+        color_hex = self.colors.get(subj, DEFAULT_SUBJECT_COLOR)
+        dur = self.session["duration_seconds"]
+
+        # Subject color dot
+        self.dot = QLabel("●")
+        self.dot.setStyleSheet(f"color: {color_hex}; font-size: 10px;")
+        row_layout.addWidget(self.dot)
+
+        # Subject label
+        self.subj_label = QLabel(subj)
+        self.subj_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 600; font-size: 12px;")
+        row_layout.addWidget(self.subj_label)
+
+        # Short tag if < 300s
+        if dur < 300:
+            self.tag = QLabel("short")
+            self.tag.setStyleSheet(f"""
+                color: {COLORS['text_dim']};
+                font-size: 9px;
+                font-weight: 600;
+                background-color: {COLORS['bg_panel']};
+                padding: 1px 4px;
+                border-radius: 2px;
+            """)
+            row_layout.addWidget(self.tag)
+
+        row_layout.addStretch()
+
+        # Date & time label
+        try:
+            dt = datetime.fromisoformat(self.session["start_time"])
+            time_str = dt.strftime("%b %d, %H:%M")
+        except Exception:
+            time_str = self.session.get("date", "")
+
+        time_label = QLabel(time_str)
+        time_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 11px;")
+        row_layout.addWidget(time_label)
+
+        # Stepper: [-] Duration [+]
+        minus_btn = QPushButton("−")
+        minus_btn.setFixedSize(18, 18)
+        minus_btn.setCursor(Qt.PointingHandCursor)
+        minus_step = 60 if dur <= 300 else 300
+        minus_btn.setToolTip(f"Decrease time by {minus_step // 60}m")
+        minus_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_panel']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 3px;
+                color: {COLORS['text_secondary']};
+                font-size: 11px;
+                font-weight: bold;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['bg_hover']};
+                border-color: {COLORS['border_light']};
+                color: {COLORS['text_primary']};
+            }}
+        """)
+        minus_btn.clicked.connect(self._decrease_duration)
+        row_layout.addWidget(minus_btn)
+
+        self.dur_label = QLabel(format_duration(dur))
+        self.dur_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 600; font-size: 12px;")
+        self.dur_label.setAlignment(Qt.AlignCenter)
+        self.dur_label.setFixedWidth(34)
+        row_layout.addWidget(self.dur_label)
+
+        plus_btn = QPushButton("+")
+        plus_btn.setFixedSize(18, 18)
+        plus_btn.setCursor(Qt.PointingHandCursor)
+        plus_btn.setToolTip("Increase time by 5m")
+        plus_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_panel']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 3px;
+                color: {COLORS['text_secondary']};
+                font-size: 11px;
+                font-weight: bold;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['bg_hover']};
+                border-color: {COLORS['border_light']};
+                color: {COLORS['text_primary']};
+            }}
+        """)
+        plus_btn.clicked.connect(self._increase_duration)
+        row_layout.addWidget(plus_btn)
+
+        # Edit button
+        edit_btn = QPushButton("✎")
+        edit_btn.setFixedSize(20, 20)
+        edit_btn.setCursor(Qt.PointingHandCursor)
+        edit_btn.setToolTip("Edit session (subject, duration, time)")
+        edit_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                color: {COLORS['text_secondary']};
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                color: {COLORS['text_primary']};
+            }}
+        """)
+        edit_btn.clicked.connect(self._open_edit_dialog)
+        row_layout.addWidget(edit_btn)
+
+        # Delete button
+        del_btn = QPushButton("✕")
+        del_btn.setFixedSize(20, 20)
+        del_btn.setCursor(Qt.PointingHandCursor)
+        del_btn.setToolTip("Delete session")
+        del_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                color: {COLORS['danger']};
+                font-size: 12px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                color: #EF4444;
+            }}
+        """)
+        del_btn.clicked.connect(self._confirm_delete)
+        row_layout.addWidget(del_btn)
+
+    def mouseDoubleClickEvent(self, event):
+        self._open_edit_dialog()
+
+    def _increase_duration(self):
+        self.db.adjust_session_duration(self.session["id"], 300)
+        self.session_updated.emit()
+
+    def _decrease_duration(self):
+        cur_dur = self.session["duration_seconds"]
+        delta = -60 if cur_dur <= 300 else -300
+        self.db.adjust_session_duration(self.session["id"], delta)
+        self.session_updated.emit()
+
+    def _change_subject(self, new_subj):
+        if new_subj != self.session["subject"]:
+            self.db.update_session(self.session["id"], subject=new_subj)
+            self.session_updated.emit()
+
+    def _open_edit_dialog(self):
+        dlg = SessionEditDialog(self.window(), self.db, session=self.session)
+        if dlg.exec_() == QDialog.Accepted:
+            self.session_updated.emit()
+
+    def _confirm_delete(self):
+        subj = self.session["subject"]
+        dur_str = format_duration(self.session["duration_seconds"])
+        try:
+            dt = datetime.fromisoformat(self.session["start_time"])
+            time_str = dt.strftime("%b %d, %H:%M")
+        except Exception:
+            time_str = self.session.get("date", "")
+
+        confirm = ConfirmDialog(
+            self.window(),
+            title="Delete Session",
+            message=f"Are you sure you want to delete this {dur_str} {subj} session ({time_str})?",
+            confirm_label="Delete",
+            is_danger=True
+        )
+        if confirm.exec_() == QDialog.Accepted:
+            self.db.delete_session(self.session["id"])
+            self.session_deleted.emit(self.session["id"])
+
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {COLORS['bg_card']};
+                border: 1px solid {COLORS['border_light']};
+                border-radius: 4px;
+                padding: 4px;
+            }}
+            QMenu::item {{
+                color: {COLORS['text_primary']};
+                padding: 5px 18px 5px 22px;
+                font-size: 11px;
+            }}
+            QMenu::item:selected {{
+                background-color: {COLORS['bg_hover']};
+            }}
+            QMenu::separator {{
+                height: 1px;
+                background: {COLORS['border']};
+                margin: 4px 6px;
+            }}
+        """)
+
+        # Change subject submenu
+        subj_menu = menu.addMenu("Change Subject")
+        subj_menu.setStyleSheet(menu.styleSheet())
+        all_subjects = self.db.get_subjects()
+        current_subj = self.session["subject"]
+        for s in all_subjects:
+            s_name = s["name"]
+            s_color = s["color"]
+            label = f"{s_name}  ✓" if s_name == current_subj else s_name
+            act = QAction(label, self)
+            act.setIcon(QIcon(make_color_dot_pixmap(s_color, size=10)))
+            act.triggered.connect(lambda ch, name=s_name: self._change_subject(name))
+            subj_menu.addAction(act)
+
+        menu.addSeparator()
+
+        # Quick time adjustments
+        act_p5 = menu.addAction("+5 minutes")
+        act_p5.triggered.connect(lambda: self._adjust_duration(300))
+        act_p15 = menu.addAction("+15 minutes")
+        act_p15.triggered.connect(lambda: self._adjust_duration(900))
+        act_m5 = menu.addAction("−5 minutes")
+        act_m5.triggered.connect(lambda: self._adjust_duration(-300))
+        act_m15 = menu.addAction("−15 minutes")
+        act_m15.triggered.connect(lambda: self._adjust_duration(-900))
+
+        menu.addSeparator()
+
+        # Edit session
+        act_edit = menu.addAction("✎  Edit Session...")
+        act_edit.triggered.connect(self._open_edit_dialog)
+
+        # Delete session
+        act_del = menu.addAction("✕  Delete Session")
+        act_del.triggered.connect(self._confirm_delete)
+
+        menu.exec_(event.globalPos())
+
+    def _adjust_duration(self, delta):
+        self.db.adjust_session_duration(self.session["id"], delta)
+        self.session_updated.emit()
+
+
 # ─── Statistics Tab Widget ────────────────────────────────────────────────────
 
 class StatsTab(QWidget):
@@ -2298,6 +3228,7 @@ class StatsTab(QWidget):
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
+        self.show_all_recent = False
         self._setup_ui()
         self._refresh_stats()
 
@@ -2351,7 +3282,8 @@ class StatsTab(QWidget):
         self.chart = BarChartWidget()
         c_layout.addWidget(self.chart)
 
-        # 7. Recent Sessions Section Header
+        # 7. Recent Sessions Section Header with + Log Session button
+        recent_hdr_layout = QHBoxLayout()
         recent_header = QLabel("RECENT SESSIONS")
         recent_header.setStyleSheet(f"""
             color: {COLORS['text_dim']};
@@ -2360,7 +3292,34 @@ class StatsTab(QWidget):
             letter-spacing: 1.5px;
             margin-top: 4px;
         """)
-        c_layout.addWidget(recent_header)
+        recent_hdr_layout.addWidget(recent_header)
+
+        recent_hdr_layout.addStretch()
+
+        add_session_btn = QPushButton("+ Log Session")
+        add_session_btn.setCursor(Qt.PointingHandCursor)
+        add_session_btn.setToolTip("Manually log a past study session")
+        add_session_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: 1px solid {COLORS['border']};
+                border-radius: 3px;
+                color: {COLORS['text_secondary']};
+                font-size: 10px;
+                font-weight: 600;
+                padding: 2px 7px;
+                margin-top: 4px;
+            }}
+            QPushButton:hover {{
+                border-color: {COLORS['border_light']};
+                color: {COLORS['text_primary']};
+                background-color: {COLORS['bg_card']};
+            }}
+        """)
+        add_session_btn.clicked.connect(self._open_add_session_dialog)
+        recent_hdr_layout.addWidget(add_session_btn)
+
+        c_layout.addLayout(recent_hdr_layout)
 
         # 8. Recent Sessions Container
         self.recent_container = QVBoxLayout()
@@ -2409,69 +3368,46 @@ class StatsTab(QWidget):
             self.recent_container.addWidget(empty_lbl)
         else:
             colors = self.db.get_subject_colors()
-            for session in reversed(sessions[-8:]):
+            limit = len(sessions) if self.show_all_recent else 8
+            for session in reversed(sessions[-limit:]):
                 row = self._create_session_row(session, colors)
                 self.recent_container.addWidget(row)
 
+            if len(sessions) > 8:
+                toggle_btn = QPushButton(
+                    "Show less" if self.show_all_recent else f"Show all ({len(sessions)} sessions)"
+                )
+                toggle_btn.setCursor(Qt.PointingHandCursor)
+                toggle_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: transparent;
+                        border: none;
+                        color: {COLORS['text_dim']};
+                        font-size: 11px;
+                        font-weight: 500;
+                        padding: 4px 0;
+                    }}
+                    QPushButton:hover {{
+                        color: {COLORS['text_primary']};
+                    }}
+                """)
+                toggle_btn.clicked.connect(self._toggle_show_all)
+                self.recent_container.addWidget(toggle_btn)
+
     def _create_session_row(self, session, colors=None):
-        row = QFrame()
-        row.setObjectName("SessionRow")
-        row.setStyleSheet(f"""
-            QFrame#SessionRow {{
-                background-color: {COLORS['bg_card']};
-                border: 1px solid {COLORS['border']};
-                border-radius: 4px;
-            }}
-            QFrame#SessionRow:hover {{
-                border-color: {COLORS['border_light']};
-                background-color: {COLORS['bg_hover']};
-            }}
-        """)
-        row_layout = QHBoxLayout(row)
-        row_layout.setContentsMargins(10, 6, 10, 6)
-        row_layout.setSpacing(6)
-
-        subj = session["subject"]
-        color_hex = (colors or {}).get(subj, DEFAULT_SUBJECT_COLOR)
-        dur = session["duration_seconds"]
-
-        dot = QLabel("●")
-        dot.setStyleSheet(f"color: {color_hex}; font-size: 10px;")
-        row_layout.addWidget(dot)
-
-        subj_label = QLabel(subj)
-        subj_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 500; font-size: 12px;")
-        row_layout.addWidget(subj_label)
-
-        if dur < 300:
-            tag = QLabel("short")
-            tag.setStyleSheet(f"""
-                color: {COLORS['text_dim']};
-                font-size: 9px;
-                font-weight: 600;
-                background-color: {COLORS['bg_panel']};
-                padding: 1px 4px;
-                border-radius: 2px;
-            """)
-            row_layout.addWidget(tag)
-
-        row_layout.addStretch()
-
-        dur_label = QLabel(format_duration(dur))
-        dur_label.setStyleSheet(f"color: {COLORS['text_primary']}; font-weight: 600; font-size: 12px;")
-        row_layout.addWidget(dur_label)
-
-        try:
-            dt = datetime.fromisoformat(session["start_time"])
-            time_str = dt.strftime("%b %d, %H:%M")
-        except Exception:
-            time_str = session["date"]
-
-        time_label = QLabel(time_str)
-        time_label.setStyleSheet(f"color: {COLORS['text_dim']}; font-size: 11px;")
-        row_layout.addWidget(time_label)
-
+        row = EditableSessionRow(session, self.db, colors, self)
+        row.session_updated.connect(self._refresh_stats)
+        row.session_deleted.connect(lambda s_id: self._refresh_stats())
         return row
+
+    def _open_add_session_dialog(self):
+        dlg = SessionEditDialog(self.window(), self.db, session=None)
+        if dlg.exec_() == QDialog.Accepted:
+            self._refresh_stats()
+
+    def _toggle_show_all(self):
+        self.show_all_recent = not self.show_all_recent
+        self._refresh_stats()
 
 
 # ─── Settings Tab Widget ──────────────────────────────────────────────────────
